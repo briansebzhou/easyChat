@@ -15,6 +15,3 @@ wechat_config.json
 
 # Logs
 *.log
-
-#release
-wechat_gui.exe

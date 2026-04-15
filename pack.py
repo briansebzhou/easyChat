@@ -1,11 +1,12 @@
 import os
 
-
 # 用来自动打包成exe程序
 def main():
-    cmd = f"pyinstaller.exe -Fw --noupx D:\PycharmProjects\easyChat\wechat_gui.py --distpath D:\PycharmProjects\easyChat\dist"
+    base = os.path.dirname(os.path.abspath(__file__))
+    script = os.path.join(base, "wechat_gui.py")
+    dist = os.path.join(base, "dist")
+    cmd = f'pyinstaller.exe -Fw --noupx "{script}" --distpath "{dist}"'
 
-    # 执行命令并打印输出
     result = os.system(cmd)
 
 
