@@ -1,1 +1,20 @@
+# Virtual environment
 .venv/
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+
+# PyInstaller build artifacts
+build/
+dist/
+*.spec
+
+# Runtime-generated config
+wechat_config.json
+
+# Logs
+*.log
+
+#release
+wechat_gui.exe

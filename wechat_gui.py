@@ -65,6 +65,7 @@ class WechatGUI(QWidget):
     # 显示微信打开方式变更提示
     def show_wechat_open_notice(self):
         msg_box = QMessageBox(self)
+        msg_box.setFont(QFont("Microsoft YaHei", 8))
         msg_box.setIcon(QMessageBox.Information)
         msg_box.setWindowTitle("重要提示")
         msg_box.setText("微信打开方式已变更")
@@ -644,5 +645,7 @@ class WechatGUI(QWidget):
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
+    font = QFont("Microsoft YaHei", 8)
+    app.setFont(font)
     ex = WechatGUI()
     sys.exit(app.exec_())
