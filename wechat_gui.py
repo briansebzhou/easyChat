@@ -15,8 +15,40 @@ from wechat_locale import WeChatLocale
 
 class WechatGUI(QWidget):
 
+    def ensure_narrator_running(self):
+        """Launch Windows Narrator if it is not already running (required for uiautomation)."""
+        import subprocess
+        # Check if Narrator is already running
+        narrator_running = False
+        try:
+            result = subprocess.run(
+                ["tasklist", "/FI", "IMAGENAME eq Narrator.exe", "/NH"],
+                capture_output=True, text=True
+            )
+            narrator_running = "Narrator.exe" in result.stdout
+        except Exception:
+            pass
+
+        if not narrator_running:
+            try:
+                subprocess.Popen(
+                    ["narrator.exe"],
+                    shell=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                time.sleep(1)  # Give Narrator time to start
+            except Exception as e:
+                QMessageBox.warning(
+                    self,
+                    "Narrator",
+                    f"Could not launch Windows Narrator automatically.\n"
+                    f"Please enable it manually (Win+Ctrl+Enter).\n\nError: {e}",
+                )
+
     def __init__(self):
         super().__init__()
+        self.ensure_narrator_running()
 
         # 读取之前保存的配置文件，如果没有则新建一个
         self.config_path = "wechat_config.json"
