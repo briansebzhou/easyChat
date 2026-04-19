@@ -251,7 +251,7 @@ class WechatGUI(QWidget):
 
     # 定时功能界面的初始化
     def init_clock(self):
-        # 在定时列表有变化后更新配置文件
+        # 在定时列表有变化后更新配置文件 + 同步 worker 线程快照
         def update_schedules():
             schedules = []
             for i in range(self.time_view.count()):
@@ -259,6 +259,8 @@ class WechatGUI(QWidget):
 
             self.config["schedules"] = schedules
             self.save_config()
+            # 同步给 ClockThread，worker 不再直接访问 QListWidget
+            self.clock.set_schedules(schedules)
             
         # 按钮响应：增加时间
         def add_contact():
@@ -319,6 +321,11 @@ class WechatGUI(QWidget):
             else:
                 self.clock.time_counting = True
 
+            # 启动前再同步一次，确保 worker 拿到最新（含双击编辑后的）任务
+            update_schedules()
+            # 重置已执行集合，避免上次运行残留导致新任务被忽略
+            self.clock.executed_tasks = set()
+
             self.clock_info.setStyleSheet("color:red")
             self.clock_info.setText("定时发送（目前已开始）")
             self.clock.start()
@@ -354,6 +361,8 @@ class WechatGUI(QWidget):
             self.time_view.addItem(schedule)
             
         self.clock.clocks = self.time_view
+        # 初始化 worker 快照（启动时也要喂一次）
+        self.clock.set_schedules(self.config["schedules"])
         hbox.addWidget(self.time_view)
 
         # 右边的按钮界面
@@ -514,8 +523,18 @@ class WechatGUI(QWidget):
         for message in self.config["messages"]:
             self.msg.addItem(message)
 
-        self.clock.send_func = send_msg
+        # 跨线程：worker 发信号 -> GUI 线程执行 send_msg / prevent_offline
+        # 必须用 QueuedConnection，保证在主线程槽函数里安全访问 Qt 控件
+        self.clock.send_func = send_msg  # 保留引用，便于调试/手动调用
         self.clock.prevent_func = self.wechat.prevent_offline
+        self.clock.send_signal.connect(
+            lambda st, ed: send_msg(st=st, ed=ed),
+            Qt.QueuedConnection,
+        )
+        self.clock.prevent_signal.connect(
+            self.wechat.prevent_offline,
+            Qt.QueuedConnection,
+        )
 
         # 发送按钮
         send_btn = QPushButton("发送")

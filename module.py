@@ -13,14 +13,18 @@ from PyQt5.QtGui import *
 class ClockThread(QThread):
     # 定义信号：用于通知GUI显示错误信息
     error_signal = pyqtSignal(str)
+    # 触发GUI线程发送消息（跨线程安全）
+    send_signal = pyqtSignal(int, int)
+    # 触发GUI线程执行防止掉线
+    prevent_signal = pyqtSignal()
 
     def __init__(self):
         super().__init__()
         # 是否正在定时
         self.time_counting = False
-        # 发送信息的函数
+        # 发送信息的函数（保留作为回退，正常情况下用 send_signal）
         self.send_func = None
-        # 定时列表
+        # 定时列表（QListWidget 引用，仅在主线程访问；worker 用 _schedules 快照）
         self.clocks = None
         # 是否防止自动下线
         self.prevent_offline = False
@@ -33,6 +37,19 @@ class ClockThread(QThread):
 
         # 用于防止掉线的内部计时器
         self._prevent_timer = 0
+
+        # worker 线程读取的定时任务快照（list[str]），由主线程通过 set_schedules 更新
+        self._schedules = []
+        self._schedules_lock = threading.Lock()
+
+    def set_schedules(self, items):
+        """主线程调用：刷新 worker 线程使用的任务快照。"""
+        with self._schedules_lock:
+            self._schedules = list(items)
+
+    def _snapshot_schedules(self):
+        with self._schedules_lock:
+            return list(self._schedules)
 
     def __del__(self):
         self.wait()
@@ -47,10 +64,10 @@ class ClockThread(QThread):
                 now = datetime.datetime.now()
                 next_event_time = None
 
-                # --- 1. 遍历列表，查找最近的下一个闹钟时间 ---
+                # --- 1. 遍历快照，查找最近的下一个闹钟时间 ---
+                schedules = self._snapshot_schedules()
                 try:
-                    for i in range(self.clocks.count()):
-                        task_id = self.clocks.item(i).text()
+                    for task_id in schedules:
                         # 如果任务已经执行过，则跳过
                         if task_id in self.executed_tasks:
                             continue
@@ -59,13 +76,11 @@ class ClockThread(QThread):
                         clock_str = " ".join(parts[:5])
                         dt_obj = datetime.datetime.strptime(clock_str, "%Y %m %d %H %M")
 
-                        # 只关心未来的任务
-                        if dt_obj > now:
-                            # 如果是第一个找到的未来任务，或者比已知的下一个任务更早
-                            if next_event_time is None or dt_obj < next_event_time:
-                                next_event_time = dt_obj
+                        # 取所有未执行任务里时间最近的一个（含已过去但还在60秒窗口内的）
+                        if next_event_time is None or dt_obj < next_event_time:
+                            next_event_time = dt_obj
                 except Exception as e:
-                    # 在UI更新列表时，直接读取可能会有瞬时错误，做个保护
+                    # 解析任务字符串失败时上报
                     error_msg = f"读取闹钟列表时出错: {e}"
                     print(error_msg)
                     # 停止定时任务
@@ -80,8 +95,10 @@ class ClockThread(QThread):
 
                 if next_event_time:
                     delta = (next_event_time - now).total_seconds()
-                    # 确保休眠时间不为负
+                    # 确保休眠时间不为负，且至少检查一次
                     sleep_seconds = max(0, delta)
+                    # 上限60秒，避免错过用户中途新增的更早任务
+                    sleep_seconds = min(sleep_seconds, 60)
 
                 print(sleep_seconds)
 
@@ -102,10 +119,10 @@ class ClockThread(QThread):
                 # --- 5. 休眠结束，检查并执行到期的任务 ---
                 now = datetime.datetime.now()  # 获取唤醒后的精确时间
 
-                # 检查并执行到期的闹钟
+                # 检查并执行到期的闹钟（使用快照，避免跨线程访问 QListWidget）
+                schedules = self._snapshot_schedules()
                 try:
-                    for i in range(self.clocks.count()):
-                        task_id = self.clocks.item(i).text()
+                    for task_id in schedules:
                         print(task_id)
                         if task_id in self.executed_tasks:
                             continue
@@ -119,8 +136,8 @@ class ClockThread(QThread):
                         # 只执行刚刚到期的任务（时间窗口：60秒内）
                         time_diff = (now - dt_obj).total_seconds()
                         if 0 <= time_diff <= 60:
-                            if self.send_func:
-                                self.send_func(st=int(st), ed=int(ed))
+                            # 通过信号在GUI线程执行发送，避免跨线程访问 Qt 控件
+                            self.send_signal.emit(int(st), int(ed))
                             # 记录为已执行
                             self.executed_tasks.add(task_id)
                         elif time_diff > 60:
@@ -128,7 +145,7 @@ class ClockThread(QThread):
                             self.executed_tasks.add(task_id)
 
                 except Exception as e:
-                    error_msg = f"执行任务时读取闹钟列表出错: {e}"
+                    error_msg = f"执行任务时解析闹钟出错: {e}"
                     print(error_msg)
                     # 停止定时任务
                     self.time_counting = False
@@ -138,12 +155,9 @@ class ClockThread(QThread):
 
                 # 检查并执行防止掉线
                 if self.prevent_offline and self._prevent_timer <= 0:
-                    try:
-                        if self.prevent_func:
-                            self.prevent_func()
-                    except Exception as e:
-                        self.error_signal.emit(f"防止掉线操作失败: {e}")
-                    # 重置计时器（无论成功与否都重置，避免连续触发）
+                    # 通过信号在GUI线程执行，避免 uiautomation 与 Qt 跨线程问题
+                    self.prevent_signal.emit()
+                    # 重置计时器
                     self._prevent_timer = self.prevent_count * 60
 
 
